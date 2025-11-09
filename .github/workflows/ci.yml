@@ -1,7 +1,9 @@
-﻿name: CI → Build → Test → Push to GHCR
+﻿name: CI - build, test, and push image
 
 on:
   push:
+    branches: [ "main" ]
+  pull_request:
     branches: [ "main" ]
 
 permissions:
@@ -9,55 +11,47 @@ permissions:
   packages: write
 
 env:
-  IMAGE_NAME: ghcr.io/${{ github.repository }}
+  REGISTRY: ghcr.io
+  IMAGE_NAME: akshara140/hello-java-ghcr
 
 jobs:
-  build_and_test:
-    name: Build & Test Java App
+  build-test-image:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: '17'
           cache: maven
 
-      - name: Run tests
+      - name: Test (Maven)
         run: mvn -B test
 
-      - name: Package JAR
+      - name: Build package (skips tests; they already ran)
         run: mvn -B -DskipTests package
 
-      - name: Upload built JAR
-        uses: actions/upload-artifact@v4
-        with:
-          name: app-jar
-          path: target/*.jar
-
-  docker_build_and_push:
-    name: Build & Push Docker Image
-    runs-on: ubuntu-latest
-    needs: build_and_test
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Log in to GitHub Container Registry
+      - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
-          registry: ghcr.io
+          registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          tags: |
-            ghcr.io/${{ github.repository }}:latest
-            ghcr.io/${{ github.repository }}:${{ github.sha }}
+      - name: Extract short SHA
+        id: vars
+        run: echo "SHORT_SHA=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+
+      - name: Build and tag image
+        run: |
+          docker build -t $REGISTRY/${{ env.IMAGE_NAME }}:latest \
+                       -t $REGISTRY/${{ env.IMAGE_NAME }}:sha-${{ steps.vars.outputs.SHORT_SHA }} .
+
+      - name: Push image
+        run: |
+          docker push $REGISTRY/${{ env.IMAGE_NAME }}:latest
+          docker push $REGISTRY/${{ env.IMAGE_NAME }}:sha-${{ steps.vars.outputs.SHORT_SHA }}
